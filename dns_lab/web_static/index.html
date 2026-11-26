@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>本地 DNS 缓存解析器实验台</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #181f2e; --panel2: #1f2940;
+    --border: #2b3856; --text: #dce4f2; --muted: #8595b3;
+    --accent: #4f8cff; --green: #2fbf71; --amber: #e0a431;
+    --red: #e5484d; --purple: #a07bff; --cyan: #39c2d7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.55 -apple-system, "Segoe UI", "PingFang SC",
+          "Microsoft YaHei", sans-serif;
+  }
+  header {
+    padding: 14px 22px; background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 17px; margin: 0; }
+  .clock-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 999px; padding: 4px 14px; font-variant-numeric: tabular-nums;
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; }
+  .dot.live { background: var(--green); } .dot.frozen { background: var(--amber); }
+  main { padding: 18px 22px 40px; max-width: 1280px; margin: 0 auto; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(2, 1fr); }
+  .grid .full { grid-column: 1 / -1; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  section.panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px 18px;
+  }
+  section.panel h2 {
+    font-size: 14px; margin: 0 0 12px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .08em;
+  }
+  label { color: var(--muted); font-size: 12px; }
+  input, select, button {
+    font: inherit; color: var(--text);
+    background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 10px; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { border-color: var(--red); color: #ff9ea1; }
+  button.small { padding: 3px 9px; font-size: 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row + .row { margin-top: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td {
+    text-align: left; padding: 7px 9px;
+    border-bottom: 1px solid var(--border); vertical-align: top;
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .badge {
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; white-space: nowrap;
+  }
+  .b-upstream { background: rgba(79,140,255,.18); color: #8fb6ff; }
+  .b-cache { background: rgba(47,191,113,.18); color: #6fe3a5; }
+  .b-negative-cache { background: rgba(224,164,49,.18); color: #f0c670; }
+  .b-failure-cache, .b-upstream-failure { background: rgba(229,72,77,.18); color: #ff9ea1; }
+  .b-stale-cache { background: rgba(160,123,255,.18); color: #c4adff; }
+  .kind-positive { color: var(--green); }
+  .kind-negative { color: var(--amber); }
+  .kind-failure { color: var(--red); }
+  .state-fresh { color: var(--green); } .state-stale { color: var(--purple); }
+  .mode-normal { color: var(--green); } .mode-nxdomain { color: var(--amber); }
+  .mode-servfail, .mode-offline { color: var(--red); }
+  .muted { color: var(--muted); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .result-card {
+    background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px; margin-top: 12px;
+  }
+  .result-card h3 { margin: 0 0 8px; font-size: 14px; }
+  .kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 12px; font-size: 13px; }
+  .kv .k { color: var(--muted); }
+  .auth-card {
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px; margin-bottom: 12px; background: var(--panel2);
+  }
+  .auth-card h3 { margin: 0 0 8px; font-size: 13px; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+  .stat-box {
+    background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px;
+  }
+  .stat-box .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-box .l { color: var(--muted); font-size: 12px; }
+  .note { font-size: 12.5px; color: var(--cyan); margin-top: 8px; }
+  .log-row:hover { background: var(--panel2); }
+  .scroll { max-height: 360px; overflow-y: auto; }
+  .scroll::-webkit-scrollbar { width: 8px; }
+  .scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .add-form { display: grid; grid-template-columns: 2fr 1fr 2fr 1fr auto; gap: 6px; margin-top: 10px; }
+  .add-form input, .add-form select { min-width: 0; }
+  .toast {
+    position: fixed; right: 18px; bottom: 18px; max-width: 380px;
+    background: var(--panel2); border: 1px solid var(--red);
+    border-radius: 10px; padding: 10px 14px; display: none; z-index: 50;
+  }
+  .toast.show { display: block; }
+  details summary { cursor: pointer; color: var(--muted); margin: 6px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧪 本地 DNS 缓存解析器实验台</h1>
+  <span class="clock-pill">
+    <span id="clock-dot" class="dot live"></span>
+    <span id="clock-mode">live</span>
+    <span class="muted">|</span>
+    <span id="clock-time" class="mono">—</span>
+  </span>
+  <span class="muted" id="clock-epoch"></span>
+</header>
+
+<main class="grid">
+  <!-- 时钟控制 -->
+  <section class="panel">
+    <h2>受控时钟</h2>
+    <div class="row">
+      <button id="btn-freeze" class="primary">冻结</button>
+      <button id="btn-resume">恢复 live</button>
+      <button id="btn-reset">重置为真实时间</button>
+    </div>
+    <div class="row">
+      <span class="muted">拨快：</span>
+      <button class="small" data-adv="5">+5s</button>
+      <button class="small" data-adv="30">+30s</button>
+      <button class="small" data-adv="60">+60s</button>
+      <button class="small" data-adv="300">+5min</button>
+      <button class="small" data-adv="-30">-30s</button>
+      <input id="adv-custom" type="number" placeholder="自定义秒数" style="width:120px">
+      <button class="small" id="btn-adv-go">拨到</button>
+    </div>
+    <div class="row">
+      <span class="muted">直接设定 epoch：</span>
+      <input id="set-epoch" type="number" placeholder="1700000000" style="width:160px">
+      <button class="small" id="btn-set">设定</button>
+    </div>
+    <p class="muted" style="font-size:12px;margin-bottom:0">
+      冻结后缓存 TTL 不再流逝；拨快时钟即可确定性地观察缓存到期、故障冷却与 serve-stale 退出。
+    </p>
+  </section>
+
+  <!-- 查询 -->
+  <section class="panel">
+    <h2>发起查询</h2>
+    <div class="row">
+      <input id="q-name" value="www.example.com" style="flex:1" placeholder="域名，如 www.example.com">
+      <select id="q-type">
+        <option>A</option><option>AAAA</option><option>NS</option><option>SOA</option>
+      </select>
+      <button id="btn-query" class="primary">查询</button>
+    </div>
+    <div class="row">
+      <span class="muted">快捷：</span>
+      <button class="small quick" data-name="www.example.com" data-type="A">正向 A</button>
+      <button class="small quick" data-name="www.example.com" data-type="AAAA">正向 AAAA</button>
+      <button class="small quick" data-name="mail.example.org" data-type="A">NODATA（有 AAAA 无 A）</button>
+      <button class="small quick" data-name="nope.example.com" data-type="A">NXDOMAIN</button>
+      <button class="small quick" data-name="api.example.com" data-type="A">短 TTL(60s)</button>
+    </div>
+    <div id="result"></div>
+  </section>
+
+  <!-- 统计 -->
+  <section class="panel full">
+    <h2>回源次数与命中统计</h2>
+    <div class="stat-grid" id="stats"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="small danger" id="btn-reset-stats">清零统计</button>
+      <button class="small danger" id="btn-clear-cache">清空全部缓存</button>
+      <button class="small" id="btn-clear-log">清空日志</button>
+    </div>
+  </section>
+
+  <!-- 权威服务 -->
+  <section class="panel">
+    <h2>权威服务（故障模式 / 回复编辑）</h2>
+    <div id="authorities"></div>
+  </section>
+
+  <!-- 缓存 -->
+  <section class="panel">
+    <h2>解析器缓存（三类分显）</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>名称 / 类型</th><th>类别</th><th>状态</th>
+          <th class="num">TTL</th><th class="num">Stale 剩余</th><th>出处</th>
+        </tr></thead>
+        <tbody id="cache-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 日志 -->
+  <section class="panel full">
+    <h2>查询日志（新的在上）</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>时刻</th><th>查询</th><th>RCODE</th><th>出处</th>
+          <th>回源?</th><th>尝试的权威</th><th>说明</th>
+        </tr></thead>
+        <tbody id="log-body"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const KIND_CLASS = {positive: "kind-positive", negative: "kind-negative", failure: "kind-failure"};
+const KIND_TEXT = {positive: "正向", negative: "否定", failure: "故障"};
+
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg; t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 3500);
+}
+
+async function api(path, body) {
+  const opt = body === undefined
+    ? {method: "GET"}
+    : {method: "POST", headers: {"Content-Type": "application/json"},
+       body: JSON.stringify(body)};
+  const resp = await fetch(path, opt);
+  const data = await resp.json();
+  if (!resp.ok || data.error) throw new Error(data.error || ("HTTP " + resp.status));
+  return data;
+}
+
+function fmtTime(epoch) {
+  const d = new Date(epoch * 1000);
+  return d.toISOString().replace("T", " ").slice(0, 19) + " UTC";
+}
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c =>
+    ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+}
+
+// ---------------- 时钟 ----------------
+async function clockAction(path, body) {
+  try { await api(path, body); await refresh(); }
+  catch (e) { toast(e.message); }
+}
+$("btn-freeze").onclick = () => clockAction("/api/clock/freeze", {});
+$("btn-resume").onclick = () => clockAction("/api/clock/resume", {});
+$("btn-reset").onclick = () => clockAction("/api/clock/reset", {});
+document.querySelectorAll("[data-adv]").forEach(b =>
+  b.onclick = () => clockAction("/api/clock/advance", {seconds: Number(b.dataset.adv)}));
+$("btn-adv-go").onclick = () => {
+  const v = parseFloat($("adv-custom").value);
+  if (Number.isNaN(v)) return toast("请输入秒数");
+  clockAction("/api/clock/advance", {seconds: v});
+};
+$("btn-set").onclick = () => {
+  const v = parseFloat($("set-epoch").value);
+  if (Number.isNaN(v)) return toast("请输入 epoch 秒");
+  clockAction("/api/clock/set", {epoch: v});
+};
+
+// ---------------- 查询 ----------------
+document.querySelectorAll(".quick").forEach(b => b.onclick = () => {
+  $("q-name").value = b.dataset.name; $("q-type").value = b.dataset.type;
+  doQuery();
+});
+$("btn-query").onclick = doQuery;
+$("q-name").addEventListener("keydown", e => { if (e.key === "Enter") doQuery(); });
+
+async function doQuery() {
+  const name = $("q-name").value.trim();
+  if (!name) return toast("请输入域名");
+  try {
+    const data = await api("/api/query",
+      {name, qtype: $("q-type").value});
+    renderResult(data.result);
+    await refresh();
+  } catch (e) { toast(e.message); }
+}
+
+function renderResult(r) {
+  const answers = r.answers.length
+    ? `<table><thead><tr><th>名称</th><th>类型</th><th>数据</th><th class="num">TTL</th></tr></thead>
+       <tbody>${r.answers.map(a => `<tr>
+         <td class="mono">${esc(a.name)}</td><td>${a.rtype}</td>
+         <td class="mono">${esc(a.data)}</td><td class="num">${a.ttl}s</td></tr>`).join("")}
+       </tbody></table>`
+    : `<p class="muted" style="margin:6px 0">无应答记录</p>`;
+  $("result").innerHTML = `
+    <div class="result-card">
+      <h3>${esc(r.name)} <span class="muted">${r.qtype}</span>
+        <span class="badge b-${r.origin}">${esc(r.origin_label)}</span>
+        <span class="badge" style="background:var(--panel);border:1px solid var(--border)">
+          ${r.rcode_name}</span>
+      </h3>
+      <div class="kv">
+        <span class="k">记录出处</span><span>${esc(r.source)}</span>
+        <span class="k">是否回源</span><span>${r.fetched ? "是（本次触发回源）" : "否（直接使用缓存）"}</span>
+        <span class="k">尝试的权威</span><span class="mono">${
+          r.attempts.length ? esc(r.attempts.join(" → ")) : "—"}</span>
+      </div>
+      ${answers}
+      ${r.note ? `<div class="note">📝 ${esc(r.note)}</div>` : ""}
+    </div>`;
+}
+
+// ---------------- 权威 ----------------
+async function setMode(server, mode) {
+  try { await api("/api/authority/mode", {server, mode}); await refresh(); }
+  catch (e) { toast(e.message); }
+}
+
+function renderAuthorities(authorities) {
+  $("authorities").innerHTML = authorities.map(a => `
+    <div class="auth-card">
+      <h3 class="mono">${esc(a.name)}
+        <span class="badge mode-${a.mode}">${modeText(a.mode)}</span></h3>
+      <div class="row">
+        <label>故障模式</label>
+        <select onchange="setMode('${esc(a.name)}', this.value)">
+          ${["normal", "nxdomain", "servfail", "offline"].map(m =>
+            `<option value="${m}" ${m === a.mode ? "selected" : ""}>${modeText(m)}</option>`).join("")}
+        </select>
+      </div>
+      ${a.zones.map(z => `
+        <details open>
+          <summary class="mono">区域 ${esc(z.name)}（SOA minimum=${esc(z.soa.data.split(" ").pop())}s）</summary>
+          <table>
+            <thead><tr><th>Owner</th><th>类型</th><th>数据</th><th class="num">TTL</th><th></th></tr></thead>
+            <tbody>
+              ${z.records.map(r => `<tr>
+                <td class="mono">${esc(r.name)}</td><td>${r.rtype}</td>
+                <td class="mono">${esc(r.data)}</td><td class="num">${r.ttl}s</td>
+                <td><button class="small danger" onclick='delRecord(${
+                  JSON.stringify({server: a.name, zone: z.name, name: r.name, rtype: r.rtype})
+                })'>删除</button></td>
+              </tr>`).join("")}
+            </tbody>
+          </table>
+          <div class="add-form">
+            <input placeholder="owner 名称" data-field="name">
+            <select data-field="rtype"><option>A</option><option>AAAA</option></select>
+            <input placeholder="记录数据（IP）" data-field="data">
+            <input type="number" placeholder="TTL" value="300" data-field="ttl">
+            <button class="small primary" onclick='addRecord(${
+              JSON.stringify({server: a.name, zone: z.name})
+            }, this)'>新增/改</button>
+          </div>
+        </details>`).join("")}
+    </div>`).join("");
+}
+function modeText(m) {
+  return {normal: "正常", nxdomain: "强制 NXDOMAIN",
+          servfail: "强制 SERVFAIL", offline: "离线（传输故障）"}[m] || m;
+}
+
+window.setMode = setMode;
+window.delRecord = async (key) => {
+  try { await api("/api/authority/record/delete", key); await refresh(); }
+  catch (e) { toast(e.message); }
+};
+window.addRecord = async (key, btn) => {
+  const form = btn.parentElement;
+  const get = (f) => form.querySelector(`[data-field="${f}"]`).value.trim();
+  const body = {...key, name: get("name"), rtype: get("rtype"),
+                data: get("data"), ttl: Number(get("ttl") || 300)};
+  if (!body.name || !body.data) return toast("名称和数据必填");
+  try { await api("/api/authority/record", body); await refresh(); }
+  catch (e) { toast(e.message); }
+};
+
+// ---------------- 缓存 / 统计 / 日志 ----------------
+function renderCache(entries) {
+  $("cache-body").innerHTML = entries.length ? entries.map(e => `
+    <tr>
+      <td class="mono">${esc(e.name)}<br><span class="muted">${
+          esc(qtypeName(e.qtype))}</span></td>
+      <td class="${KIND_CLASS[e.kind]}">${KIND_TEXT[e.kind]}</td>
+      <td class="state-${e.state}">${e.state === "fresh" ? "新鲜" : "陈旧(stale)"}</td>
+      <td class="num">${e.ttl}s</td>
+      <td class="num">${e.kind === "failure" ? "—" : e.stale_ttl + "s"}</td>
+      <td class="mono" style="font-size:12px">${esc(e.source)}</td>
+    </tr>`).join("")
+    : `<tr><td colspan="6" class="muted">缓存为空</td></tr>`;
+}
+function qtypeName(t) {
+  return {1: "A", 2: "NS", 5: "CNAME", 6: "SOA", 28: "AAAA"}[t] || t;
+}
+
+function renderStats(stats) {
+  const up = stats.upstream;
+  const boxes = [
+    ["回源总次数", up.total, "var(--accent)"],
+    ["正向命中", stats.cache_hits.fresh, "var(--green)"],
+    ["否定命中", stats.cache_hits.negative, "var(--amber)"],
+    ["故障命中", stats.cache_hits.failure, "var(--red)"],
+    ["Stale 兜底", stats.cache_hits.stale, "var(--purple)"],
+    ["缓存未命中", stats.cache_misses, "var(--muted)"],
+  ];
+  const perServer = Object.entries(up.per_server)
+    .map(([k, v]) => `<div class="stat-box"><div class="v">${v}</div>
+      <div class="l mono" style="word-break:break-all">回源 ${esc(k)}</div></div>`).join("");
+  const health = Object.entries(stats.health).map(([k, h]) =>
+    `<div class="stat-box"><div class="v" style="color:${
+      h.in_cooldown ? "var(--red)" : "var(--green)"}">${
+      h.in_cooldown ? "冷却 " + h.cooldown_remaining + "s" : "健康"}</div>
+      <div class="l mono" style="word-break:break-all">${esc(k)}</div></div>`).join("");
+  $("stats").innerHTML = boxes.map(([l, v, c]) =>
+    `<div class="stat-box"><div class="v" style="color:${c}">${v}</div>
+     <div class="l">${l}</div></div>`).join("") + perServer + health;
+}
+
+function renderLog(entries) {
+  $("log-body").innerHTML = entries.length ? entries.map(e => `
+    <tr class="log-row">
+      <td class="mono muted" style="white-space:nowrap">${fmtTime(e.time)}</td>
+      <td class="mono">${esc(e.query.name)} ${esc(e.qtype_name)}</td>
+      <td>${esc(e.rcode_name)}</td>
+      <td><span class="badge b-${e.origin}">${esc(e.origin_label)}</span></td>
+      <td>${e.fetched ? "是" : "否"}</td>
+      <td class="mono" style="font-size:12px">${
+        esc((e.upstream_attempts || []).join(" → ") || "—")}</td>
+      <td style="font-size:12px">${esc(e.note || "")}</td>
+    </tr>`).join("")
+    : `<tr><td colspan="7" class="muted">暂无日志</td></tr>`;
+}
+
+// ---------------- 全局刷新 ----------------
+async function refresh() {
+  try {
+    const s = await api("/api/state");
+    const dot = $("clock-dot");
+    dot.className = "dot " + s.clock.mode;
+    $("clock-mode").textContent = s.clock.mode === "frozen" ? "frozen（已冻结）" : "live";
+    $("clock-time").textContent = fmtTime(s.clock.epoch);
+    $("clock-epoch").textContent = "epoch=" + Math.floor(s.clock.epoch);
+    renderAuthorities(s.authorities);
+    renderCache(s.cache);
+    renderStats(s.stats);
+    const log = await api("/api/log");
+    renderLog(log.entries);
+  } catch (e) { /* 静默：轮询失败不打扰 */ }
+}
+
+$("btn-reset-stats").onclick = async () => {
+  await api("/api/stats/reset", {}); refresh();
+};
+$("btn-clear-cache").onclick = async () => {
+  await api("/api/cache/clear", {}); refresh();
+};
+$("btn-clear-log").onclick = async () => {
+  await api("/api/log/clear", {}); refresh();
+};
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
